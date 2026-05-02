@@ -90,6 +90,11 @@ services:
       - "8081:8081"
     environment:
       ORDER_PORT: "8081"
+      DB_HOST: mysql-order
+      DB_PORT: "3306"
+      DB_USER: root
+      DB_PASS: ${MYSQL_ROOT_PASSWORD:-rootpw}
+      DB_NAME: orders_db
     networks:
       - order-net
     depends_on:
@@ -106,6 +111,11 @@ services:
       - "8082:8082"
     environment:
       INVENTORY_PORT: "8082"
+      DB_HOST: mysql-inventory
+      DB_PORT: "3306"
+      DB_USER: root
+      DB_PASS: ${MYSQL_ROOT_PASSWORD:-rootpw}
+      DB_NAME: inventory_db
     networks:
       - order-net
     depends_on:
@@ -122,6 +132,11 @@ services:
       - "8083:8083"
     environment:
       PAYMENT_PORT: "8083"
+      DB_HOST: mysql-payment
+      DB_PORT: "3306"
+      DB_USER: root
+      DB_PASS: ${MYSQL_ROOT_PASSWORD:-rootpw}
+      DB_NAME: payments_db
     networks:
       - order-net
     depends_on:
