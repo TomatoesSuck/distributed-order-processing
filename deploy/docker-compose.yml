@@ -141,6 +141,7 @@ services:
       DB_PASS: ${MYSQL_ROOT_PASSWORD:-rootpw}
       DB_NAME: payments_db
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      PAYMENT_FAILURE_RATE: "${PAYMENT_FAILURE_RATE:-0.0}"
     networks:
       - order-net
     depends_on:

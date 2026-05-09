@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"gorm.io/gorm"
@@ -18,10 +19,11 @@ import (
 )
 
 type PaymentCommandHandler struct {
-	db           *gorm.DB
-	paymentRepo  *repository.PaymentRepository
-	eventRepo    *repository.ProcessedEventRepository
-	pub          *messaging.Publisher
+	db          *gorm.DB
+	paymentRepo *repository.PaymentRepository
+	eventRepo   *repository.ProcessedEventRepository
+	pub         *messaging.Publisher
+	failureRate float64
 }
 
 func NewPaymentCommandHandler(
@@ -29,8 +31,15 @@ func NewPaymentCommandHandler(
 	paymentRepo *repository.PaymentRepository,
 	eventRepo *repository.ProcessedEventRepository,
 	pub *messaging.Publisher,
+	failureRate float64,
 ) *PaymentCommandHandler {
-	return &PaymentCommandHandler{db: db, paymentRepo: paymentRepo, eventRepo: eventRepo, pub: pub}
+	return &PaymentCommandHandler{
+		db:          db,
+		paymentRepo: paymentRepo,
+		eventRepo:   eventRepo,
+		pub:         pub,
+		failureRate: failureRate,
+	}
 }
 
 func (h *PaymentCommandHandler) Handle(ctx context.Context, msg amqp.Delivery) error {
@@ -64,18 +73,32 @@ func (h *PaymentCommandHandler) handleProcess(ctx context.Context, cmd shared.Pr
 		return fmt.Errorf("check payment: %w", err)
 	}
 
-	var txID string
+	var (
+		txID    string
+		success bool
+		reason  string
+	)
 	if existing != nil {
 		// Payment row already exists — idempotent re-publish
 		txID = existing.TransactionID
-		log.Printf("payment: payment row exists for order %d (idempotent)", cmd.OrderID)
+		success = existing.Status == model.PaymentStatusSuccess
+		if !success {
+			reason = "SIMULATED_FAILURE"
+		}
+		log.Printf("payment: payment row exists for order %d status=%s (idempotent)", cmd.OrderID, existing.Status)
 	} else {
-		// Create payment in transaction + mark event processed atomically
+		// Simulate failure if configured
+		failed := h.failureRate > 0 && rand.Float64() < h.failureRate
 		txID = newUUID()
+		status := model.PaymentStatusSuccess
+		if failed {
+			status = model.PaymentStatusFailed
+			reason = "SIMULATED_FAILURE"
+		}
 		payment := &model.Payment{
 			OrderID:       cmd.OrderID,
 			Amount:        cmd.Amount,
-			Status:        model.PaymentStatusSuccess, // Phase 3: always success
+			Status:        status,
 			TransactionID: txID,
 		}
 		if err := h.db.Transaction(func(tx *gorm.DB) error {
@@ -86,14 +109,16 @@ func (h *PaymentCommandHandler) handleProcess(ctx context.Context, cmd shared.Pr
 		}); err != nil {
 			return fmt.Errorf("payment transaction: %w", err)
 		}
-		log.Printf("payment: processed order %d tx_id=%s", cmd.OrderID, txID)
+		success = !failed
+		log.Printf("payment: processed order %d tx_id=%s status=%s", cmd.OrderID, txID, status)
 	}
 
 	event := shared.PaymentProcessedEvent{
 		SagaID:        cmd.SagaID,
 		OrderID:       cmd.OrderID,
 		TransactionID: txID,
-		Success:       true,
+		Success:       success,
+		Reason:        reason,
 	}
 	if err := h.pub.Publish(ctx, shared.ExchangeEvents, shared.RoutingKeyPaymentProcessed, newUUID(), event); err != nil {
 		return fmt.Errorf("publish PaymentProcessedEvent: %w", err)
