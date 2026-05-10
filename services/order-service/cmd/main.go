@@ -59,6 +59,7 @@ func main() {
 	orchestrator := service.NewSagaOrchestrator(database, sagaRepo, orderRepo, pub)
 
 	h := handler.NewOrderHandler(orderSvc, orchestrator)
+	adminH := handler.NewAdminHandler(sagaRepo, orderRepo)
 
 	// ── Consumer ─────────────────────────────────────────────────
 	consumerCtx, stopConsumers := context.WithCancel(context.Background())
@@ -79,6 +80,7 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "order"})
 	})
 	h.Register(r)
+	adminH.Register(r)
 
 	srv := &http.Server{Addr: ":" + cfg.Port, Handler: r}
 	go func() {
