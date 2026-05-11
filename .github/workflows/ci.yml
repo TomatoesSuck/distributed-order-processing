@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel in-progress runs when a new commit is pushed to the same branch/PR.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: unit (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [order-service, inventory-service, payment-service]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: services/${{ matrix.service }}/go.sum
+
+      - name: go vet
+        working-directory: services/${{ matrix.service }}
+        run: go vet ./...
+
+      - name: go build
+        working-directory: services/${{ matrix.service }}
+        run: go build ./...
+
+      - name: go test -cover
+        working-directory: services/${{ matrix.service }}
+        run: go test -cover ./...
+
+  integration:
+    name: integration (testcontainers)
+    runs-on: ubuntu-latest
+    # Run only after the three unit jobs pass — saves CI minutes on early failures.
+    needs: unit
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: tests/integration/go.sum
+
+      - name: docker info (smoke-check the runner has Docker)
+        run: docker info
+
+      - name: go test -tags=integration
+        working-directory: tests/integration
+        run: go test -tags=integration -timeout=10m -v ./...
