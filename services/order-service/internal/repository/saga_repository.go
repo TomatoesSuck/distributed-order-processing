@@ -26,9 +26,10 @@ type SagaRepoIface interface {
 
 // InventoryReservedOutcome lets the orchestrator decide the next saga step.
 type InventoryReservedOutcome struct {
-	Skip   bool
-	Failed bool
-	Amount float64 // populated on success
+	Skip     bool
+	Failed   bool
+	Amount   float64       // populated on success
+	Duration time.Duration // saga age at terminal transition (zero unless Failed)
 }
 
 // PaymentProcessedOutcome carries data needed to compose ReleaseInventoryCmd.
@@ -37,12 +38,14 @@ type PaymentProcessedOutcome struct {
 	Compensate bool
 	ProductID  uint64
 	Quantity   int
+	Duration   time.Duration // saga age at COMPLETED transition (zero unless terminal)
 }
 
 // InventoryReleasedOutcome marks compensation result.
 type InventoryReleasedOutcome struct {
-	Skip   bool
-	Failed bool
+	Skip     bool
+	Failed   bool
+	Duration time.Duration // saga age at terminal (COMPENSATED or FAILED)
 }
 
 type SagaRepository struct {
@@ -116,6 +119,7 @@ func (r *SagaRepository) CommitInventoryReserved(ctx context.Context, eventID st
 
 		if !event.Success {
 			out.Failed = true
+			out.Duration = time.Since(state.CreatedAt)
 			if err := tx.Model(&model.Order{}).Where("id = ?", event.OrderID).
 				Update("status", model.OrderStatusFailed).Error; err != nil {
 				return fmt.Errorf("update order status FAILED: %w", err)
@@ -201,6 +205,7 @@ func (r *SagaRepository) CommitPaymentProcessed(ctx context.Context, eventID str
 				return fmt.Errorf("update saga_state COMPENSATING: %w", err)
 			}
 		} else {
+			out.Duration = time.Since(state.CreatedAt)
 			if err := tx.Model(&model.Order{}).Where("id = ?", event.OrderID).
 				Update("status", model.OrderStatusConfirmed).Error; err != nil {
 				return fmt.Errorf("update order status: %w", err)
@@ -247,6 +252,7 @@ func (r *SagaRepository) CommitInventoryReleased(ctx context.Context, eventID st
 			return nil
 		}
 
+		out.Duration = time.Since(state.CreatedAt)
 		if event.Success {
 			if err := tx.Model(&model.Order{}).Where("id = ?", event.OrderID).
 				Update("status", model.OrderStatusCompensated).Error; err != nil {

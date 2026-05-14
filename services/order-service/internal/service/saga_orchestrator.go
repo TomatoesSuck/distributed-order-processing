@@ -119,7 +119,7 @@ func (o *SagaOrchestrator) onInventoryReserved(ctx context.Context, event shared
 		return nil
 	}
 	if out.Failed {
-		o.recordTerminal(ctx, event.SagaID, model.SagaStatusFailed, "RESERVING_INVENTORY", event.Reason)
+		o.recordTerminal(ctx, event.SagaID, model.SagaStatusFailed, "RESERVING_INVENTORY", event.Reason, out.Duration)
 		return nil
 	}
 
@@ -145,7 +145,7 @@ func (o *SagaOrchestrator) onPaymentProcessed(ctx context.Context, event shared.
 		return nil
 	}
 	if !out.Compensate {
-		o.recordTerminal(ctx, event.SagaID, model.SagaStatusCompleted, "DONE", "")
+		o.recordTerminal(ctx, event.SagaID, model.SagaStatusCompleted, "DONE", "", out.Duration)
 		return nil
 	}
 
@@ -176,27 +176,25 @@ func (o *SagaOrchestrator) onInventoryReleased(ctx context.Context, event shared
 		// Saga compensation itself failed — mark FAILED, record metric, alert via log.
 		observability.LoggerFrom(ctx).Error("saga compensation failed, manual intervention required",
 			zap.String("reason", event.Reason))
-		o.recordTerminal(ctx, event.SagaID, model.SagaStatusFailed, "RELEASING_INVENTORY", event.Reason)
+		o.recordTerminal(ctx, event.SagaID, model.SagaStatusFailed, "RELEASING_INVENTORY", event.Reason, out.Duration)
 		return nil
 	}
-	o.recordTerminal(ctx, event.SagaID, model.SagaStatusCompensated, "DONE", "")
+	o.recordTerminal(ctx, event.SagaID, model.SagaStatusCompensated, "DONE", "", out.Duration)
 	return nil
 }
 
 // recordTerminal centralises the metric + log for any terminal saga state.
-// It looks up the saga to compute end-to-end duration; the extra read is
-// negligible against the 1 query/saga we already do for state transitions.
-func (o *SagaOrchestrator) recordTerminal(ctx context.Context, sagaID, status, step, reason string) {
+// Duration comes from the same tx that updated the saga to its terminal state
+// (see SagaRepo.Commit*Outcome.Duration), so SagaTotal and SagaDuration are
+// always observed together — no DB lookup that could silently drop observations.
+func (o *SagaOrchestrator) recordTerminal(ctx context.Context, sagaID, status, step, reason string, duration time.Duration) {
 	observability.SagaTotal.WithLabelValues(status).Inc()
-
-	if s, err := o.sagaRepo.GetBySagaID(ctx, sagaID); err == nil {
-		observability.SagaDuration.WithLabelValues(status).
-			Observe(time.Since(s.CreatedAt).Seconds())
-	}
+	observability.SagaDuration.WithLabelValues(status).Observe(duration.Seconds())
 
 	fields := []zap.Field{
 		zap.String("status", status),
 		zap.String("step", step),
+		zap.Duration("duration", duration),
 	}
 	if reason != "" {
 		fields = append(fields, zap.String("reason", reason))
