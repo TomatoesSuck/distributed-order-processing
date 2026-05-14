@@ -35,6 +35,7 @@ POST /orders
 | ORM | GORM |
 | Database | MySQL 8 (one DB per service) |
 | Messaging | RabbitMQ 3 (amqp091-go) |
+| Observability | Prometheus + Grafana, zap structured logs, trace_id via AMQP headers |
 | Infrastructure | Docker Compose |
 
 ## Services
@@ -248,6 +249,85 @@ Failure-rate of 0% and exact inventory conservation at the end of the run
 confirm the saga state machine, optimistic-lock, and consumer-side idempotency
 all behave correctly under real cross-AZ network + AMQPS/TLS overhead, not
 just on a single Docker host.
+
+## Observability
+
+Every service exposes Prometheus metrics, emits structured (zap) JSON logs, and
+propagates a `trace_id` from the inbound HTTP request all the way through
+RabbitMQ to downstream consumers — so a single saga can be `grep`-ed across all
+three service log streams.
+
+### What's wired
+
+| Layer | What | How |
+|---|---|---|
+| HTTP metrics | `http_requests_total{service,method,path,status}`, `http_request_duration_seconds_bucket{...}` | [`shared/observability/middleware.go`](shared/observability/middleware.go) — Gin middleware records every request, skips `/metrics` |
+| Saga metrics | `saga_total{status}`, `saga_duration_seconds_bucket{status}` | [`saga_orchestrator.go`](services/order-service/internal/service/saga_orchestrator.go) `recordTerminal()` fires on COMPLETED / COMPENSATED / FAILED |
+| Logs | zap JSON to stdout, every line tagged `service`, `trace_id`, and (where applicable) `saga_id` | [`shared/observability/logger.go`](shared/observability/logger.go) |
+| Trace propagation | `trace_id` and `saga_id` injected into AMQP headers on publish, extracted into `ctx` on consume | [`shared/observability/tracing.go`](shared/observability/tracing.go) + per-service `messaging/{publisher,consumer}.go` |
+| Scrape + dashboards | Prometheus + Grafana auto-provisioned via docker-compose | [`deploy/observability/`](deploy/observability/) |
+
+### Endpoints
+
+After `make up`:
+
+| URL | What |
+|---|---|
+| `http://localhost:8081/metrics` | order-service Prometheus metrics |
+| `http://localhost:8082/metrics` | inventory-service Prometheus metrics |
+| `http://localhost:8083/metrics` | payment-service Prometheus metrics |
+| `http://localhost:9090/targets` | Prometheus — confirms 3 targets `UP` |
+| `http://localhost:3000/d/dop-saga-overview/saga-overview` | **Saga Overview Grafana dashboard** (anonymous viewer enabled) |
+
+### Saga Overview dashboard
+
+6 panels, auto-refresh 5s:
+
+- **HTTP request rate by service** — POST `/orders` vs `/inventory` vs `/payments`
+- **HTTP latency p50 / p95 / p99** — across all services, excluding health checks
+- **HTTP error rate by service (4xx + 5xx)** — bar chart
+- **Sagas — terminal counts (last 15m)** — coloured: COMPLETED green, COMPENSATED orange, FAILED red
+- **Saga duration percentiles (COMPLETED + COMPENSATED)** — end-to-end saga wall-clock time
+- **HTTP request rate by route** — stacked, breaks down which endpoints are hot
+
+![Saga Overview dashboard](docs/images/grafana-overview.png)
+
+### Tracing a single saga across services
+
+Place an order with a known trace id, then `grep` it across all three service log streams:
+
+```bash
+TRACE_ID="$(uuidgen)"
+curl -s -X POST http://localhost:8081/orders \
+  -H "X-Request-ID: $TRACE_ID" \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id":42,"product_id":1001,"quantity":2,"total_amount":199.98}'
+
+for s in order-service inventory-service payment-service; do
+  echo "── $s ──"
+  docker compose -f deploy/docker-compose.yml logs "$s" 2>/dev/null | grep -F "$TRACE_ID"
+done
+```
+
+Sample output (one trace, four log lines, three services):
+
+```jsonl
+order-service     | {"msg":"saga started","service":"order","trace_id":"<...>","saga_id":"<...>","order_id":2}
+order-service     | {"msg":"http_request","service":"order","trace_id":"<...>","method":"POST","path":"/orders","route":"/orders","status":201,"duration":0.023}
+inventory-service | {"msg":"reserved","service":"inventory","trace_id":"<...>","saga_id":"<...>","quantity":2,"product_id":1001,"order_id":2,"attempt":1}
+payment-service   | {"msg":"processed","service":"payment","trace_id":"<...>","saga_id":"<...>","order_id":2,"tx_id":"<...>","status":"SUCCESS"}
+order-service     | {"msg":"saga: terminal","service":"order","trace_id":"<...>","saga_id":"<...>","status":"COMPLETED","step":"DONE"}
+```
+
+### Reproducing the dashboard screenshot
+
+```bash
+make up                                    # full stack including Prometheus + Grafana
+INVENTORY_URL=http://localhost:8082 bash scripts/loadtest/seed.sh
+locust -f scripts/loadtest/locustfile.py --host http://localhost:8081 \
+       --headless --run-time 5m
+# visit http://localhost:3000/d/dop-saga-overview/saga-overview
+```
 
 ## Deploy to AWS
 
