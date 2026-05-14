@@ -1,0 +1,35 @@
+=== BEFORE worker pool (50u × 15m locust) ===
+HTTP p99: 78 ms (POST /orders synchronous path only)
+HTTP throughput: ~1844 req/s, 553,956 reqs total, 0% failures
+
+Saga end-to-end (real wall-clock from saga.created_at to terminal):
+  p50 = 411.9 s
+  p90 = 562.4 s
+  p95 = 581.2 s
+  p99 = 596.2 s
+  max = 431 s (DB)
+
+saga_total{COMPLETED}    = 22,651
+saga_duration_*_count    = 22,651
+drift                    = 0  (was ~28% pre-fix)
+
+Bucket distribution (saga_duration_seconds_bucket{status="COMPLETED"}):
+  le=0.01     0
+  le=0.025    0
+  le=0.05     0
+  le=0.1      0
+  le=0.25     5
+  le=0.5     11
+  le=1       24
+  le=2.5     63
+  le=5      109
+  le=30     635
+  le=60   1,369
+  le=300  7,260
+  le=600 22,651
+  le=+Inf 22,651    <- 0 overflow
+
+Conclusion: percentiles are TRUTHFUL now. Saga p99 ≈ 10 min under sustained
+50-user load because 4 RabbitMQ msgs/order × 1843 RPS ingress = 7400 msg/s
+into queues, but consumer side does ~50 msg/s/service with prefetch=1 +
+single-goroutine = 53× backpressure.

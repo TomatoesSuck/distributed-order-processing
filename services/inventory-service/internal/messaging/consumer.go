@@ -13,10 +13,19 @@ import (
 
 type HandlerFunc func(ctx context.Context, msg amqp.Delivery) error
 
-// StartConsumer starts a goroutine that consumes from queue and calls handler.
-// On handler error: nack (requeue=false → dead-letter queue).
-// On panic: recover, nack.
-// On channel close: reconnect up to 5 times, then panic.
+// Consumer tunables — kept identical across all three services so capacity
+// reasoning ("3 × consumerWorkers concurrent handlers DB-side") stays simple.
+// prefetch >= consumerWorkers so workers never starve while waiting on broker.
+const (
+	consumerWorkers  = 16
+	consumerPrefetch = 32
+)
+
+// StartConsumer reads from queue and fans deliveries out to a pool of
+// consumerWorkers goroutines so handler latency doesn't cap throughput at
+// `1 / handler_latency` msg/s. One distributor goroutine owns the AMQP
+// delivery channel (incl. reconnect logic); workers pull from a buffered
+// in-process chan.
 //
 // `logger` is the per-service base logger; trace_id and saga_id pulled from
 // the AMQP headers are bound to it before each message is dispatched, so
@@ -32,7 +41,23 @@ func StartConsumer(ctx context.Context, mq *MQ, queue string, logger *zap.Logger
 		return err
 	}
 
+	work := make(chan amqp.Delivery, consumerWorkers)
+
+	// Worker pool — each goroutine handles one delivery at a time, acks
+	// independently. amqp091 channel is goroutine-safe for ack/nack.
+	for i := 0; i < consumerWorkers; i++ {
+		go func() {
+			for msg := range work {
+				dispatchMsg(ctx, msg, logger, handler)
+			}
+		}()
+	}
+
+	// Distributor — owns the AMQP delivery channel + reconnect, fans each
+	// delivery into `work` so RabbitMQ flow control (via prefetch) backs up
+	// here instead of in the workers.
 	go func() {
+		defer close(work)
 		currentCh := ch
 		currentMsgs := msgs
 		for {
@@ -52,7 +77,7 @@ func StartConsumer(ctx context.Context, mq *MQ, queue string, logger *zap.Logger
 					currentMsgs = newMsgs
 					continue
 				}
-				dispatchMsg(ctx, msg, logger, handler)
+				work <- msg
 			}
 		}
 	}()
@@ -91,7 +116,7 @@ func openConsumerCh(mq *MQ, queue string) (*amqp.Channel, <-chan amqp.Delivery, 
 	if err != nil {
 		return nil, nil, fmt.Errorf("open channel: %w", err)
 	}
-	if err := ch.Qos(1, 0, false); err != nil {
+	if err := ch.Qos(consumerPrefetch, 0, false); err != nil {
 		ch.Close()
 		return nil, nil, fmt.Errorf("qos: %w", err)
 	}

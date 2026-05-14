@@ -1,0 +1,27 @@
+=== AFTER worker pool (16 workers + prefetch=32 / service) ===
+HTTP throughput: ~994 req/s (down from 1843 BEFORE — see analysis)
+HTTP p99: 150 ms (up from 78 ms BEFORE)
+
+Saga end-to-end:
+  p50 = 195 s
+  p90 = 332 s
+  p95 = 466 s
+  p99 = 573 s
+
+saga_total{COMPLETED}    = 117,209  (5.2× of BEFORE 22,651)
+saga_duration_*_count    = 117,209
+drift                    = 0
+
+Bucket distribution:
+  le=0.25         0
+  le=0.5         86      <- 86 sagas finished sub-500ms (the early ones)
+  le=1          198
+  le=2.5        594
+  le=5        1,262
+  le=30       7,510
+  le=60      14,235
+  le=300    107,429
+  le=600    117,209
+  le=+Inf   117,209      <- still 0 overflow
+
+DB max saga age = 315 s
