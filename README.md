@@ -309,7 +309,7 @@ for s in order-service inventory-service payment-service; do
 done
 ```
 
-Sample output (one trace, four log lines, three services):
+Example output (illustrative format — real `grep` output also contains gin access logs and AMQP frames; shown here trimmed to the saga-relevant lines):
 
 ```jsonl
 order-service     | {"msg":"saga started","service":"order","trace_id":"<...>","saga_id":"<...>","order_id":2}
