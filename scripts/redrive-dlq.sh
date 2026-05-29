@@ -31,9 +31,15 @@ while :; do
   echo "$batch" | jq -c '.[]' | while read -r msg; do
     rk="$(echo "$msg" | jq -r '.routing_key')"
     payload="$(echo "$msg" | jq -r '.payload')"
+    # Carry forward message_id so consumer idempotency (processed_events /
+    # inventory_logs) still dedups a message that had already succeeded.
+    # Keep trace headers but DROP x-retry-count: a manual redrive resets the
+    # retry budget so the message isn't dead-lettered again on first failure.
+    msgid="$(echo "$msg" | jq -r '.properties.message_id // ""')"
+    headers="$(echo "$msg" | jq -c '(.properties.headers // {}) | del(."x-retry-count")')"
     curl -fsS "${auth[@]}" -H 'content-type: application/json' \
-      -d "$(jq -nc --arg rk "$rk" --arg p "$payload" \
-            '{properties:{delivery_mode:2},routing_key:$rk,payload:$p,payload_encoding:"string"}')" \
+      -d "$(jq -nc --arg rk "$rk" --arg p "$payload" --arg mid "$msgid" --argjson hdr "$headers" \
+            '{properties:({delivery_mode:2,headers:$hdr} + (if $mid=="" then {} else {message_id:$mid} end)),routing_key:$rk,payload:$p,payload_encoding:"string"}')" \
       "$MGMT/api/exchanges/$VHOST/$EXCHANGE/publish" >/dev/null
   done
 

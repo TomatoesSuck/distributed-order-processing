@@ -325,4 +325,3 @@ func getSagaStatusForOrder(t *testing.T, infra *testInfra, orderID uint64) strin
 	).Scan(&status))
 	return status
 }
-
