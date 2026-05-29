@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	shared "github.com/TomatoesSuck/distributed-order-processing/shared"
+	"github.com/TomatoesSuck/distributed-order-processing/shared/amqpretry"
 	"github.com/TomatoesSuck/distributed-order-processing/shared/observability"
 
 	"github.com/TomatoesSuck/distributed-order-processing/order-service/internal/messaging"
@@ -84,21 +85,22 @@ func (o *SagaOrchestrator) HandleEvent(ctx context.Context, msg amqp.Delivery) e
 	case shared.RoutingKeyInventoryReserved:
 		var event shared.InventoryReservedEvent
 		if err := json.Unmarshal(msg.Body, &event); err != nil {
-			return fmt.Errorf("unmarshal InventoryReservedEvent: %w", err)
+			// Malformed body can never succeed on retry — dead-letter at once.
+			return amqpretry.Permanent(fmt.Errorf("unmarshal InventoryReservedEvent: %w", err))
 		}
 		return o.onInventoryReserved(ctx, event, eventID)
 
 	case shared.RoutingKeyPaymentProcessed:
 		var event shared.PaymentProcessedEvent
 		if err := json.Unmarshal(msg.Body, &event); err != nil {
-			return fmt.Errorf("unmarshal PaymentProcessedEvent: %w", err)
+			return amqpretry.Permanent(fmt.Errorf("unmarshal PaymentProcessedEvent: %w", err))
 		}
 		return o.onPaymentProcessed(ctx, event, eventID)
 
 	case shared.RoutingKeyInventoryReleased:
 		var event shared.InventoryReleasedEvent
 		if err := json.Unmarshal(msg.Body, &event); err != nil {
-			return fmt.Errorf("unmarshal InventoryReleasedEvent: %w", err)
+			return amqpretry.Permanent(fmt.Errorf("unmarshal InventoryReleasedEvent: %w", err))
 		}
 		return o.onInventoryReleased(ctx, event, eventID)
 

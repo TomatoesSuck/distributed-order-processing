@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	shared "github.com/TomatoesSuck/distributed-order-processing/shared"
+	"github.com/TomatoesSuck/distributed-order-processing/shared/amqpretry"
 	"github.com/TomatoesSuck/distributed-order-processing/shared/observability"
 
 	"github.com/TomatoesSuck/distributed-order-processing/inventory-service/internal/messaging"
@@ -41,13 +42,14 @@ func (h *InventoryCommandHandler) Handle(ctx context.Context, msg amqp.Delivery)
 	case shared.RoutingKeyInventoryReserve:
 		var cmd shared.ReserveInventoryCmd
 		if err := json.Unmarshal(msg.Body, &cmd); err != nil {
-			return fmt.Errorf("unmarshal ReserveInventoryCmd: %w", err)
+			// Malformed body can never succeed on retry — dead-letter at once.
+			return amqpretry.Permanent(fmt.Errorf("unmarshal ReserveInventoryCmd: %w", err))
 		}
 		return h.handleReserve(ctx, cmd)
 	case shared.RoutingKeyInventoryRelease:
 		var cmd shared.ReleaseInventoryCmd
 		if err := json.Unmarshal(msg.Body, &cmd); err != nil {
-			return fmt.Errorf("unmarshal ReleaseInventoryCmd: %w", err)
+			return amqpretry.Permanent(fmt.Errorf("unmarshal ReleaseInventoryCmd: %w", err))
 		}
 		return h.handleRelease(ctx, cmd)
 	default:

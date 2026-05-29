@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	shared "github.com/TomatoesSuck/distributed-order-processing/shared"
+	"github.com/TomatoesSuck/distributed-order-processing/shared/amqpretry"
 	"github.com/TomatoesSuck/distributed-order-processing/shared/observability"
 
 	"github.com/TomatoesSuck/distributed-order-processing/payment-service/internal/messaging"
@@ -45,7 +46,8 @@ func (h *PaymentCommandHandler) Handle(ctx context.Context, msg amqp.Delivery) e
 	case shared.RoutingKeyPaymentProcess:
 		var cmd shared.ProcessPaymentCmd
 		if err := json.Unmarshal(msg.Body, &cmd); err != nil {
-			return fmt.Errorf("unmarshal ProcessPaymentCmd: %w", err)
+			// Malformed body can never succeed on retry — dead-letter at once.
+			return amqpretry.Permanent(fmt.Errorf("unmarshal ProcessPaymentCmd: %w", err))
 		}
 		return h.handleProcess(ctx, cmd, msg.MessageId)
 	default:

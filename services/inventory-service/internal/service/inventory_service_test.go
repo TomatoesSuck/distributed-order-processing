@@ -11,6 +11,7 @@ import (
 
 	"github.com/TomatoesSuck/distributed-order-processing/inventory-service/internal/model"
 	shared "github.com/TomatoesSuck/distributed-order-processing/shared"
+	"github.com/TomatoesSuck/distributed-order-processing/shared/amqpretry"
 )
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
@@ -220,6 +221,19 @@ func TestHandle_DispatchRouting(t *testing.T) {
 	// Unknown routing key returns nil (no panic).
 	err = h.Handle(context.Background(), amqp.Delivery{RoutingKey: "bogus", Body: []byte("{}")})
 	assert.NoError(t, err)
+}
+
+// TestHandle_MalformedBody_IsPermanent verifies a body that can never parse is
+// classified Permanent, so the dispatcher dead-letters it immediately instead
+// of retrying it RETRY_MAX_ATTEMPTS times.
+func TestHandle_MalformedBody_IsPermanent(t *testing.T) {
+	h := NewInventoryCommandHandler(&mockInvRepo{}, &mockLogRepo{}, &mockPublisher{}, 3)
+	err := h.Handle(context.Background(), amqp.Delivery{
+		RoutingKey: shared.RoutingKeyInventoryReserve,
+		Body:       []byte("not json"),
+	})
+	assert.Error(t, err)
+	assert.True(t, amqpretry.IsPermanent(err), "malformed body must be classified Permanent")
 }
 
 // TestInventoryService_CRUD covers the simple passthrough wrapper used by the HTTP layer.
