@@ -139,6 +139,25 @@
       "targets": [
         { "expr": "sum by (path) (rate(http_requests_total{path!=\"/health\"}[1m]))", "legendFormat": "{{path}}", "refId": "A" }
       ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "DLQ depth (dlq_messages)",
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 25, "stacking": { "mode": "normal", "group": "A" } }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "expr": "dlq_messages", "legendFormat": "{{queue}}", "refId": "A" }
+      ]
     }
   ]
 }

@@ -76,6 +76,7 @@ func main() {
 	if err := messaging.StartConsumer(consumerCtx, mq, shared.QueuePaymentCommands, logger, cmdHandler.Handle, pub, cfg.RetryMaxAttempts); err != nil {
 		logger.Fatal("start consumer", zap.Error(err))
 	}
+	messaging.StartDLQSampler(consumerCtx, mq, shared.QueuePaymentCommands+".dlq", logger)
 	logger.Info("consumer started", zap.String("queue", shared.QueuePaymentCommands))
 
 	// ── HTTP ─────────────────────────────────────────────────────
