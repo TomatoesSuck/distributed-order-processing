@@ -94,3 +94,42 @@ func (p *Publisher) publishOnce(ctx context.Context, exchange, routingKey, messa
 		return ctx.Err()
 	}
 }
+
+// PublishRaw forwards a pre-marshaled body with explicit headers (used to
+// republish a failed delivery to the retry queue or DLQ). Unlike Publish it
+// does NOT re-marshal or re-inject trace headers — the caller passes the
+// original message's headers so trace_id/saga_id and the retry count survive.
+func (p *Publisher) PublishRaw(ctx context.Context, exchange, routingKey, messageID string, body []byte, headers amqp.Table) error {
+	ch, err := p.mq.Channel()
+	if err != nil {
+		return fmt.Errorf("open channel: %w", err)
+	}
+	defer ch.Close()
+
+	if err := ch.Confirm(false); err != nil {
+		return fmt.Errorf("confirm mode: %w", err)
+	}
+	confirms := ch.NotifyPublish(make(chan amqp.Confirmation, 1))
+
+	if err := ch.PublishWithContext(ctx, exchange, routingKey, false, false, amqp.Publishing{
+		DeliveryMode: amqp.Persistent,
+		MessageId:    messageID,
+		ContentType:  "application/json",
+		Body:         body,
+		Headers:      headers,
+	}); err != nil {
+		return fmt.Errorf("publish raw: %w", err)
+	}
+
+	select {
+	case c := <-confirms:
+		if !c.Ack {
+			return fmt.Errorf("broker nacked message")
+		}
+		return nil
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("publisher confirm timeout")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
