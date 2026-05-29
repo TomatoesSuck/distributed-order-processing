@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 
@@ -148,7 +147,7 @@ func (h *InventoryCommandHandler) publishReserved(ctx context.Context, cmd share
 		Success:   success,
 		Reason:    reason,
 	}
-	if err := h.pub.Publish(ctx, shared.ExchangeEvents, shared.RoutingKeyInventoryReserved, newUUID(), event); err != nil {
+	if err := h.pub.Publish(ctx, shared.ExchangeEvents, shared.RoutingKeyInventoryReserved, shared.NewUUID(), event); err != nil {
 		return fmt.Errorf("publish InventoryReservedEvent: %w", err)
 	}
 	return nil
@@ -163,19 +162,8 @@ func (h *InventoryCommandHandler) publishReleased(ctx context.Context, cmd share
 		Success:   success,
 		Reason:    reason,
 	}
-	if err := h.pub.Publish(ctx, shared.ExchangeEvents, shared.RoutingKeyInventoryReleased, newUUID(), event); err != nil {
+	if err := h.pub.Publish(ctx, shared.ExchangeEvents, shared.RoutingKeyInventoryReleased, shared.NewUUID(), event); err != nil {
 		return fmt.Errorf("publish InventoryReleasedEvent: %w", err)
 	}
 	return nil
-}
-
-func newUUID() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		panic(fmt.Sprintf("rand.Read: %v", err))
-	}
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
-		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }

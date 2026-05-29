@@ -91,7 +91,7 @@ func (h *PaymentCommandHandler) handleProcess(ctx context.Context, cmd shared.Pr
 	} else {
 		// Simulate failure if configured
 		failed := h.failureRate > 0 && rand.Float64() < h.failureRate
-		txID = newUUID()
+		txID = shared.NewUUID()
 		status := model.PaymentStatusSuccess
 		if failed {
 			status = model.PaymentStatusFailed
@@ -120,7 +120,7 @@ func (h *PaymentCommandHandler) handleProcess(ctx context.Context, cmd shared.Pr
 		Success:       success,
 		Reason:        reason,
 	}
-	if err := h.pub.Publish(ctx, shared.ExchangeEvents, shared.RoutingKeyPaymentProcessed, newUUID(), event); err != nil {
+	if err := h.pub.Publish(ctx, shared.ExchangeEvents, shared.RoutingKeyPaymentProcessed, shared.NewUUID(), event); err != nil {
 		return fmt.Errorf("publish PaymentProcessedEvent: %w", err)
 	}
 	return nil

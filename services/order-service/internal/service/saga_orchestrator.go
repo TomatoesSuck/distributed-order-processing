@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -41,7 +40,7 @@ func NewSagaOrchestrator(
 
 // StartSaga writes saga_state then publishes ReserveInventoryCmd.
 func (o *SagaOrchestrator) StartSaga(ctx context.Context, order *model.Order) error {
-	sagaID := newUUID()
+	sagaID := shared.NewUUID()
 	state := &model.SagaState{
 		SagaID:      sagaID,
 		OrderID:     order.ID,
@@ -60,7 +59,7 @@ func (o *SagaOrchestrator) StartSaga(ctx context.Context, order *model.Order) er
 		ProductID: order.ProductID,
 		Quantity:  order.Quantity,
 	}
-	if err := o.pub.Publish(ctx, shared.ExchangeCommands, shared.RoutingKeyInventoryReserve, newUUID(), cmd); err != nil {
+	if err := o.pub.Publish(ctx, shared.ExchangeCommands, shared.RoutingKeyInventoryReserve, shared.NewUUID(), cmd); err != nil {
 		return fmt.Errorf("publish ReserveInventoryCmd: %w", err)
 	}
 	observability.LoggerFrom(ctx).Info("saga started", zap.Uint64("order_id", order.ID))
@@ -128,7 +127,7 @@ func (o *SagaOrchestrator) onInventoryReserved(ctx context.Context, event shared
 		OrderID: event.OrderID,
 		Amount:  out.Amount,
 	}
-	if err := o.pub.Publish(ctx, shared.ExchangeCommands, shared.RoutingKeyPaymentProcess, newUUID(), cmd); err != nil {
+	if err := o.pub.Publish(ctx, shared.ExchangeCommands, shared.RoutingKeyPaymentProcess, shared.NewUUID(), cmd); err != nil {
 		observability.LoggerFrom(ctx).Warn("publish ProcessPaymentCmd failed after DB commit", zap.Error(err))
 		return fmt.Errorf("publish ProcessPaymentCmd: %w", err)
 	}
@@ -155,7 +154,7 @@ func (o *SagaOrchestrator) onPaymentProcessed(ctx context.Context, event shared.
 		ProductID: out.ProductID,
 		Quantity:  out.Quantity,
 	}
-	if err := o.pub.Publish(ctx, shared.ExchangeCommands, shared.RoutingKeyInventoryRelease, newUUID(), cmd); err != nil {
+	if err := o.pub.Publish(ctx, shared.ExchangeCommands, shared.RoutingKeyInventoryRelease, shared.NewUUID(), cmd); err != nil {
 		observability.LoggerFrom(ctx).Warn("publish ReleaseInventoryCmd failed after DB commit", zap.Error(err))
 		return fmt.Errorf("publish ReleaseInventoryCmd: %w", err)
 	}
@@ -271,7 +270,7 @@ func (o *SagaOrchestrator) recoverInProgress(ctx context.Context, s model.SagaSt
 			ProductID: order.ProductID,
 			Quantity:  order.Quantity,
 		}
-		if err := o.pub.Publish(ctx, shared.ExchangeCommands, shared.RoutingKeyInventoryReserve, newUUID(), cmd); err != nil {
+		if err := o.pub.Publish(ctx, shared.ExchangeCommands, shared.RoutingKeyInventoryReserve, shared.NewUUID(), cmd); err != nil {
 			return fmt.Errorf("republish ReserveInventoryCmd: %w", err)
 		}
 		observability.LoggerFrom(ctx).Info("saga recovery: re-sent ReserveInventoryCmd")
@@ -281,7 +280,7 @@ func (o *SagaOrchestrator) recoverInProgress(ctx context.Context, s model.SagaSt
 			OrderID: order.ID,
 			Amount:  order.TotalAmount,
 		}
-		if err := o.pub.Publish(ctx, shared.ExchangeCommands, shared.RoutingKeyPaymentProcess, newUUID(), cmd); err != nil {
+		if err := o.pub.Publish(ctx, shared.ExchangeCommands, shared.RoutingKeyPaymentProcess, shared.NewUUID(), cmd); err != nil {
 			return fmt.Errorf("republish ProcessPaymentCmd: %w", err)
 		}
 		observability.LoggerFrom(ctx).Info("saga recovery: re-sent ProcessPaymentCmd")
@@ -311,20 +310,9 @@ func (o *SagaOrchestrator) recoverCompensating(ctx context.Context, s model.Saga
 		ProductID: order.ProductID,
 		Quantity:  order.Quantity,
 	}
-	if err := o.pub.Publish(ctx, shared.ExchangeCommands, shared.RoutingKeyInventoryRelease, newUUID(), cmd); err != nil {
+	if err := o.pub.Publish(ctx, shared.ExchangeCommands, shared.RoutingKeyInventoryRelease, shared.NewUUID(), cmd); err != nil {
 		return fmt.Errorf("republish ReleaseInventoryCmd: %w", err)
 	}
 	observability.LoggerFrom(ctx).Info("saga recovery: re-sent ReleaseInventoryCmd")
 	return nil
-}
-
-func newUUID() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		panic(fmt.Sprintf("rand.Read: %v", err))
-	}
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
-		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
